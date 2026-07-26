@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Coyote Bowling - German Shepherd Edition</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Comic Sans MS', cursive, sans-serif;
+            background: linear-gradient(180deg, #87CEEB 0%, #90EE90 100%);
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        #gameCanvas {
+            border: 3px solid #8B4513;
+            border-radius: 10px;
+            background: #DEB887;
+            cursor: crosshair;
+            display: none;
+        }
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            gap: 20px;
+            background: rgba(139, 69, 19, 0.85);
+            padding: 10px 20px;
+            border-radius: 20px;
+            color: #FFD700;
+            font-size: 16px;
+            font-weight: bold;
+            z-index: 10;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+        #message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 48px;
+            color: #FF4500;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 20;
+        }
+        #instructions {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 8px 20px;
+            border-radius: 10px;
+            font-size: 14px;
+            z-index: 10;
+            display: none;
+        }
+        .btn {
+            background: #FF6347;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        .btn:hover { background: #FF4500; }
+
+        /* Menu Screen */
+        #menuScreen {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 30px;
+            text-align: center;
+        }
+        #menuScreen h1 {
+            font-size: 48px;
+            color: #8B4513;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+        #menuScreen h2 {
+            font-size: 24px;
+            color: #5C4400;
+        }
+        .menu-btn {
+            background: linear-gradient(180deg, #FFD700, #FFA500);
+            color: #5C4400;
+            border: 3px solid #8B4513;
+            padding: 20px 50px;
+            border-radius: 15px;
+            cursor: pointer;
+            font-size: 24px;
+            font-weight: bold;
+            font-family: 'Comic Sans MS', cursive;
+            transition: transform 0.1s, box-shadow 0.1s;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+        .menu-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 12px rgba(0,0,0,0.4);
+        }
+        .menu-btn:active { transform: scale(0.97); }
+        .menu-buttons { display: flex; gap: 30px; }
+        .player-indicator {
+            background: rgba(0,0,0,0.15);
+            padding: 4px 12px;
+            border-radius: 10px;
+        }
+        .active-player { background: rgba(255,215,0,0.4); }
+    </style>
+</head>
+<body>
+    <!-- Menu Screen -->
+    <div id="menuScreen">
+        <h1>Coyote Bowling</h1>
+        <h2>German Shepherd Edition</h2>
+        <p style="font-size:18px; color:#5C4400; max-width:400px;">
+            A German Shepherd hurls a squirrel to knock down coyote heads. What's not to love?
+        </p>
+        <div class="menu-buttons">
+            <button class="menu-btn" onclick="startGame(1)">1 Player</button>
+            <button class="menu-btn" onclick="startGame(2)">2 Players</button>
+        </div>
+    </div>
+
+    <!-- Game UI -->
+    <div id="ui">
+        <span id="playerTurn" class="player-indicator active-player">Player 1</span>
+        <span>Frame: <span id="frame">1</span>/10</span>
+        <span>Roll: <span id="roll">1</span></span>
+        <span>Pins: <span id="pinsLeft">10</span></span>
+        <span id="p1ScoreWrap" class="player-indicator">P1: <span id="p1Score">0</span></span>
+        <span id="p2ScoreWrap" class="player-indicator" style="display:none;">P2: <span id="p2Score">0</span></span>
+        <button class="btn" onclick="backToMenu()">Menu</button>
+    </div>
+    <div id="message"></div>
+    <canvas id="gameCanvas"></canvas>
+    <div id="instructions">Click and drag from the dog to aim, release to throw the squirrel!</div>
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// Responsive canvas sizing
+function resizeCanvas() {
+    canvas.width = Math.min(window.innerWidth - 20, 900);
+    canvas.height = Math.min(window.innerHeight - 80, 650);
+}
+resizeCanvas();
+window.addEventListener('resize', () => { resizeCanvas(); if (gameState !== 'menu') resetPositions(); });
+
+// Player / mode state
+let numPlayers = 1;
+let currentPlayer = 1;
+let scores = [0, 0]; // index 0 = P1, index 1 = P2
+let playerFrames = [1, 1];
+let playerRolls = [1, 1];
+
+// Game state
+let gameState = 'menu'; // menu, aiming, rolling, scored, gameover
+let frame = 1, rollNum = 1;
+let dragStart = null, dragEnd = null, isDragging = false;
+
+// Physics constants
+const FRICTION = 0.985;
+const PIN_FRICTION = 0.95;
+const BOUNCE = 0.6;
+const PIN_RADIUS = 14;
+const SQUIRREL_RADIUS = 16;
+
+// Game objects
+let dog = { x: 0, y: 0 };
+let squirrel = { x: 0, y: 0, vx: 0, vy: 0, active: false, rotation: 0 };
+let pins = [];
+let knockedPins = [];
+let particles = [];
+let animFrameId = null;
+
+// --- Menu / Start ---
+function startGame(players) {
+    numPlayers = players;
+    currentPlayer = 1;
+    scores = [0, 0];
+    playerFrames = [1, 1];
+    playerRolls = [1, 1];
+    frame = 1;
+    rollNum = 1;
+    knockedPins = [];
+    particles = [];
+    gameState = 'aiming';
+
+    document.getElementById('menuScreen').style.display = 'none';
+    document.getElementById('gameCanvas').style.display = 'block';
+    document.getElementById('ui').style.display = 'flex';
+    document.getElementById('instructions').style.display = 'block';
+
+    if (numPlayers === 2) {
+        document.getElementById('p2ScoreWrap').style.display = '';
+    } else {
+        document.getElementById('p2ScoreWrap').style.display = 'none';
+    }
+
+    resizeCanvas();
+    resetPositions();
+    setupPins();
+    updateUI();
+
+    if (!animFrameId) gameLoop();
+    showMessage("Let's Bowl! 🐕");
+}
+
+function backToMenu() {
+    gameState = 'menu';
+    document.getElementById('menuScreen').style.display = 'flex';
+    document.getElementById('gameCanvas').style.display = 'none';
+    document.getElementById('ui').style.display = 'none';
+    document.getElementById('instructions').style.display = 'none';
+}
+
+// --- Positions & Pins ---
+function resetPositions() {
+    dog.x = canvas.width / 2;
+    dog.y = canvas.height - 80;
+    squirrel.x = dog.x;
+    squirrel.y = dog.y - 30;
+    squirrel.active = false;
+    squirrel.vx = 0;
+    squirrel.vy = 0;
+    squirrel.rotation = 0;
+}
+
+function setupPins() {
+    pins = [];
+    knockedPins = [];
+    const startX = canvas.width / 2;
+    const startY = 120;
+    const spacing = 36;
+    const rows = [1, 2, 3, 4];
+    let id = 0;
+    for (let row = 0; row < rows.length; row++) {
+        const count = rows[row];
+        const offsetX = -(count - 1) * spacing / 2;
+        for (let i = 0; i < count; i++) {
+            pins.push({
+                id: id++,
+                x: startX + offsetX + i * spacing,
+                y: startY + row * spacing,
+                vx: 0, vy: 0,
+                knocked: false,
+                rotation: 0,
+                opacity: 1
+            });
+        }
+    }
+}
+
+// --- Drawing ---
+// Animated birds
+let birds = [];
+function initBirds() {
+    for (let i = 0; i < 5; i++) {
+        birds.push({
+            x: Math.random() * 900,
+            y: 30 + Math.random() * 80,
+            speed: 0.5 + Math.random() * 1.5,
+            wingPhase: Math.random() * Math.PI * 2,
+            size: 4 + Math.random() * 4
+        });
+    }
+}
+initBirds();
+
+function drawBird(bx, by, size, wingPhase) {
+    const wing = Math.sin(wingPhase) * size;
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(bx - size, by + wing);
+    ctx.quadraticCurveTo(bx - size/2, by - Math.abs(wing), bx, by);
+    ctx.quadraticCurveTo(bx + size/2, by - Math.abs(wing), bx + size, by + wing);
+    ctx.stroke();
+}
+
+function drawTree(tx, ty, trunkH, crownR) {
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.1)';
+    ctx.beginPath(); ctx.ellipse(tx, ty + 5, crownR * 0.5, 6, 0, 0, Math.PI * 2); ctx.fill();
+    // Trunk
+    ctx.fillStyle = '#5D3A1A';
+    ctx.fillRect(tx - 5, ty - trunkH, 10, trunkH);
+    // Trunk texture
+    ctx.strokeStyle = '#3E2510'; ctx.lineWidth = 1;
+    for (let i = 0; i < trunkH; i += 12) {
+        ctx.beginPath(); ctx.moveTo(tx - 4, ty - i); ctx.lineTo(tx + 4, ty - i - 6); ctx.stroke();
+    }
+    // Crown layers (multiple circles for fullness)
+    const colors = ['#2D5A27', '#3A7A33', '#2A6B24', '#4A8A3A'];
+    for (let j = 0; j < 5; j++) {
+        ctx.fillStyle = colors[j % colors.length];
+        const ox = (Math.sin(j * 1.8) * crownR * 0.4);
+        const oy = (Math.cos(j * 1.3) * crownR * 0.3);
+        ctx.beginPath();
+        ctx.arc(tx + ox, ty - trunkH - crownR * 0.4 + oy, crownR * 0.55, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    // Top highlight
+    ctx.fillStyle = '#5CA850';
+    ctx.beginPath(); ctx.arc(tx, ty - trunkH - crownR * 0.7, crownR * 0.3, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawBush(bx, by, size) {
+    const colors = ['#3B6B30', '#4A8B3A', '#2F5A28'];
+    for (let i = 0; i < 3; i++) {
+        ctx.fillStyle = colors[i];
+        ctx.beginPath();
+        ctx.ellipse(bx + (i - 1) * size * 0.5, by - size * 0.3, size * 0.5, size * 0.4, 0, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    // Highlight
+    ctx.fillStyle = '#6BBF5A';
+    ctx.beginPath(); ctx.arc(bx, by - size * 0.5, size * 0.2, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawLane() {
+    // Sky gradient
+    const skyGrad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    skyGrad.addColorStop(0, '#4A90D9');
+    skyGrad.addColorStop(0.3, '#87CEEB');
+    skyGrad.addColorStop(0.6, '#A8E6A0');
+    skyGrad.addColorStop(1, '#3D7A35');
+    ctx.fillStyle = skyGrad;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Ground layer
+    ctx.fillStyle = '#4A8B3A';
+    ctx.fillRect(0, canvas.height * 0.55, canvas.width, canvas.height * 0.45);
+
+    // Dirt path texture
+    ctx.fillStyle = '#6B8C42';
+    for (let i = 0; i < 20; i++) {
+        const gx = Math.sin(i * 7.3) * canvas.width * 0.45 + canvas.width / 2;
+        const gy = canvas.height * 0.6 + Math.sin(i * 3.1) * canvas.height * 0.15;
+        ctx.beginPath(); ctx.arc(gx, gy, 15 + Math.sin(i) * 8, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Back row trees (distant, smaller)
+    const laneLeft = canvas.width / 2 - 100;
+    const laneRight = canvas.width / 2 + 100;
+
+    drawTree(40, canvas.height * 0.45, 80, 30);
+    drawTree(canvas.width - 50, canvas.height * 0.45, 70, 28);
+    drawTree(90, canvas.height * 0.50, 60, 25);
+    drawTree(canvas.width - 100, canvas.height * 0.48, 65, 26);
+
+    // Front trees (larger, flanking the lane)
+    drawTree(laneLeft - 70, canvas.height * 0.7, 100, 38);
+    drawTree(laneRight + 70, canvas.height * 0.7, 95, 36);
+    drawTree(laneLeft - 140, canvas.height * 0.75, 110, 42);
+    drawTree(laneRight + 140, canvas.height * 0.75, 105, 40);
+
+    // Bushes along the edges
+    drawBush(laneLeft - 40, canvas.height * 0.82, 20);
+    drawBush(laneRight + 35, canvas.height * 0.80, 18);
+    drawBush(laneLeft - 110, canvas.height * 0.88, 22);
+    drawBush(laneRight + 100, canvas.height * 0.86, 20);
+    drawBush(60, canvas.height * 0.92, 16);
+    drawBush(canvas.width - 70, canvas.height * 0.90, 18);
+
+    // Lane (dirt path through forest)
+    ctx.fillStyle = '#C4A265';
+    ctx.fillRect(laneLeft, 0, 200, canvas.height);
+    // Lane wood grain
+    ctx.strokeStyle = 'rgba(139,90,43,0.3)';
+    ctx.lineWidth = 1;
+    for (let x = laneLeft; x <= laneRight; x += 18) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+    }
+
+    // Gutters (mossy edges)
+    ctx.fillStyle = '#5A7A40';
+    ctx.fillRect(laneLeft - 15, 0, 15, canvas.height);
+    ctx.fillRect(laneRight, 0, 15, canvas.height);
+
+    // Foul line (a rough log)
+    ctx.fillStyle = '#5D3A1A';
+    ctx.fillRect(laneLeft - 15, canvas.height - 150, laneRight - laneLeft + 30, 6);
+    ctx.fillStyle = '#3E2510';
+    ctx.fillRect(laneLeft - 15, canvas.height - 148, laneRight - laneLeft + 30, 2);
+
+    // Animated birds
+    birds.forEach(b => {
+        b.x += b.speed;
+        b.wingPhase += 0.12;
+        if (b.x > canvas.width + 20) { b.x = -20; b.y = 30 + Math.random() * 80; }
+        drawBird(b.x, b.y, b.size, b.wingPhase);
+    });
+}
+
+function drawDog(x, y) {
+    ctx.save(); ctx.translate(x, y);
+
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    ctx.beginPath(); ctx.ellipse(0, 30, 32, 8, 0, 0, Math.PI * 2); ctx.fill();
+
+    // Muscular body (German Shepherd: black saddle, tan underside)
+    ctx.fillStyle = '#1A1A1A'; // Black saddle
+    ctx.beginPath(); ctx.ellipse(0, 8, 32, 22, 0, 0, Math.PI * 2); ctx.fill();
+    // Tan chest
+    ctx.fillStyle = '#C8963E';
+    ctx.beginPath(); ctx.ellipse(0, 16, 22, 14, 0, 0, Math.PI); ctx.fill();
+
+    // Front legs (muscular, planted)
+    ctx.fillStyle = '#A07830';
+    ctx.fillRect(-14, 22, 8, 14);
+    ctx.fillRect(6, 22, 8, 14);
+    // Paws
+    ctx.fillStyle = '#1A1A1A';
+    ctx.beginPath(); ctx.ellipse(-10, 36, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(10, 36, 6, 4, 0, 0, Math.PI * 2); ctx.fill();
+
+    // Neck (thick)
+    ctx.fillStyle = '#2A2A2A';
+    ctx.beginPath(); ctx.ellipse(0, -8, 16, 14, 0, Math.PI, Math.PI * 2); ctx.fill();
+
+    // Head (angular, wolf-like)
+    ctx.fillStyle = '#1A1A1A';
+    ctx.beginPath(); ctx.ellipse(0, -22, 16, 15, 0, 0, Math.PI * 2); ctx.fill();
+    // Tan muzzle area
+    ctx.fillStyle = '#C8963E';
+    ctx.beginPath(); ctx.ellipse(0, -14, 10, 8, 0, 0, Math.PI); ctx.fill();
+
+    // Long snout (German Shepherd signature)
+    ctx.fillStyle = '#A07830';
+    ctx.beginPath();
+    ctx.moveTo(-8, -16);
+    ctx.lineTo(0, -8);
+    ctx.lineTo(8, -16);
+    ctx.quadraticCurveTo(0, -20, -8, -16);
+    ctx.fill();
+
+    // Pointy ears (large, alert, forward-facing)
+    ctx.fillStyle = '#1A1A1A';
+    ctx.beginPath(); ctx.moveTo(-10, -30); ctx.lineTo(-16, -48); ctx.lineTo(-3, -32); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(10, -30); ctx.lineTo(16, -48); ctx.lineTo(3, -32); ctx.closePath(); ctx.fill();
+    // Inner ears
+    ctx.fillStyle = '#C8963E';
+    ctx.beginPath(); ctx.moveTo(-9, -32); ctx.lineTo(-13, -43); ctx.lineTo(-5, -33); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(9, -32); ctx.lineTo(13, -43); ctx.lineTo(5, -33); ctx.closePath(); ctx.fill();
+
+    // Eyes (intense, slightly narrowed — badass look)
+    ctx.fillStyle = '#B8860B'; // Amber eyes
+    ctx.beginPath(); ctx.ellipse(-6, -24, 4, 3, -0.1, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(6, -24, 4, 3, 0.1, 0, Math.PI * 2); ctx.fill();
+    // Pupils (sharp)
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(-6, -24, 2, 2.5, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(6, -24, 2, 2.5, 0, 0, Math.PI * 2); ctx.fill();
+    // Eye shine
+    ctx.fillStyle = '#FFF';
+    ctx.beginPath(); ctx.arc(-5, -25, 1, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(7, -25, 1, 0, Math.PI * 2); ctx.fill();
+    // Brow ridges (angry/determined look)
+    ctx.strokeStyle = '#0D0D0D'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(-10, -27); ctx.lineTo(-4, -28); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(10, -27); ctx.lineTo(4, -28); ctx.stroke();
+
+    // Nose
+    ctx.fillStyle = '#0D0D0D';
+    ctx.beginPath(); ctx.ellipse(0, -15, 4, 3, 0, 0, Math.PI * 2); ctx.fill();
+
+    // Mouth (slight snarl showing one tooth)
+    ctx.strokeStyle = '#0D0D0D'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(-5, -11); ctx.quadraticCurveTo(0, -8, 5, -11); ctx.stroke();
+    // Fang
+    ctx.fillStyle = '#FFF';
+    ctx.beginPath(); ctx.moveTo(-3, -11); ctx.lineTo(-2, -8); ctx.lineTo(-4, -8); ctx.closePath(); ctx.fill();
+
+    // Bushy tail (up and alert)
+    ctx.fillStyle = '#1A1A1A';
+    ctx.lineWidth = 6; ctx.lineCap = 'round'; ctx.strokeStyle = '#1A1A1A';
+    ctx.beginPath(); ctx.moveTo(-22, 5); ctx.quadraticCurveTo(-38, -10, -32, -25); ctx.stroke();
+    // Tail tip (tan)
+    ctx.strokeStyle = '#A07830'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(-32, -25); ctx.quadraticCurveTo(-30, -30, -28, -28); ctx.stroke();
+
+    // Spiked collar (badass accessory)
+    ctx.fillStyle = '#2A2A2A';
+    ctx.beginPath(); ctx.ellipse(0, -5, 18, 4, 0, 0, Math.PI); ctx.fill();
+    ctx.fillStyle = '#C0C0C0';
+    for (let s = -3; s <= 3; s++) {
+        ctx.beginPath(); ctx.arc(s * 5, -5, 2.5, 0, Math.PI * 2); ctx.fill();
+    }
+    // Spike points
+    ctx.fillStyle = '#E0E0E0';
+    for (let s = -2; s <= 2; s++) {
+        ctx.beginPath(); ctx.moveTo(s * 7, -6); ctx.lineTo(s * 7 - 1.5, -10); ctx.lineTo(s * 7 + 1.5, -10); ctx.closePath(); ctx.fill();
+    }
+
+    // Player number badge
+    if (numPlayers === 2) {
+        ctx.fillStyle = currentPlayer === 1 ? '#4488FF' : '#FF4488';
+        ctx.beginPath(); ctx.arc(28, -35, 10, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FFF'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('P' + currentPlayer, 28, -35);
+    }
+    ctx.restore();
+}
+
+function drawSquirrel(x, y, rotation) {
+    ctx.save(); ctx.translate(x, y); ctx.rotate(rotation);
+    ctx.fillStyle = '#8B4513'; ctx.beginPath(); ctx.ellipse(0, 0, 12, 9, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#A0522D'; ctx.beginPath(); ctx.arc(10, -4, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#6B3410'; ctx.beginPath(); ctx.moveTo(-10, 0); ctx.quadraticCurveTo(-22, -15, -15, -22); ctx.quadraticCurveTo(-8, -18, -10, -5); ctx.fill();
+    ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(12, -5, 2, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#A0522D'; ctx.beginPath(); ctx.arc(8, -10, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+}
+
+function drawCoyotePin(pin) {
+    ctx.save(); ctx.translate(pin.x, pin.y); ctx.rotate(pin.rotation); ctx.globalAlpha = pin.opacity;
+    ctx.fillStyle = '#D4D4D4'; ctx.beginPath(); ctx.moveTo(-5, 10); ctx.lineTo(5, 10); ctx.lineTo(3, 20); ctx.lineTo(-3, 20); ctx.closePath(); ctx.fill(); ctx.strokeStyle = '#999'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = '#A0896C'; ctx.beginPath(); ctx.ellipse(0, -2, 13, 14, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#C4A882'; ctx.beginPath(); ctx.ellipse(0, 6, 7, 8, 0, 0, Math.PI); ctx.fill();
+    ctx.fillStyle = '#7A6B5A';
+    ctx.beginPath(); ctx.moveTo(-8, -12); ctx.lineTo(-12, -26); ctx.lineTo(-3, -14); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(8, -12); ctx.lineTo(12, -26); ctx.lineTo(3, -14); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#C4956A';
+    ctx.beginPath(); ctx.moveTo(-8, -14); ctx.lineTo(-10, -22); ctx.lineTo(-5, -14); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(8, -14); ctx.lineTo(10, -22); ctx.lineTo(5, -14); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#FFD700'; ctx.beginPath(); ctx.arc(-5, -5, 4, 0, Math.PI * 2); ctx.arc(5, -5, 4, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(-5, -5, 2, 0, Math.PI * 2); ctx.arc(5, -5, 2, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#333'; ctx.beginPath(); ctx.ellipse(0, 4, 3, 2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#333'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(-5, 9); ctx.quadraticCurveTo(0, 12, 5, 9); ctx.stroke();
+    ctx.restore();
+}
+
+function drawAimLine() {
+    if (isDragging && dragStart && dragEnd) {
+        const dx = dragStart.x - dragEnd.x;
+        const dy = dragStart.y - dragEnd.y;
+        const power = Math.min(Math.sqrt(dx * dx + dy * dy), 200);
+        const angle = Math.atan2(dy, dx);
+        ctx.strokeStyle = 'rgba(255,' + Math.max(0, 255 - Math.floor(power)) + ',0,0.8)';
+        ctx.lineWidth = 3; ctx.setLineDash([8, 4]);
+        ctx.beginPath(); ctx.moveTo(dog.x, dog.y - 30);
+        ctx.lineTo(dog.x + Math.cos(angle) * power, dog.y - 30 + Math.sin(angle) * power);
+        ctx.stroke(); ctx.setLineDash([]);
+        const barWidth = 120, barHeight = 12;
+        const barX = dog.x - barWidth / 2, barY = dog.y + 35;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(barX - 2, barY - 2, barWidth + 4, barHeight + 4);
+        const ratio = power / 200;
+        const gradient = ctx.createLinearGradient(barX, 0, barX + barWidth, 0);
+        gradient.addColorStop(0, '#00FF00'); gradient.addColorStop(0.5, '#FFFF00'); gradient.addColorStop(1, '#FF0000');
+        ctx.fillStyle = gradient; ctx.fillRect(barX, barY, barWidth * ratio, barHeight);
+    }
+}
+
+function drawParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx; p.y += p.vy; p.vy += 0.3; p.life -= 0.02;
+        if (p.life <= 0) { particles.splice(i, 1); continue; }
+        ctx.globalAlpha = p.life; ctx.fillStyle = p.color;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+        ctx.globalAlpha = 1;
+    }
+}
+
+function spawnParticles(x, y, count, colors) {
+    for (let i = 0; i < count; i++) {
+        particles.push({ x, y, vx: (Math.random()-0.5)*8, vy: (Math.random()-0.5)*8-3, size: Math.random()*4+2, color: colors[Math.floor(Math.random()*colors.length)], life: 1 });
+    }
+}
+
+// --- Physics ---
+function updateSquirrel() {
+    if (!squirrel.active) return;
+    squirrel.x += squirrel.vx; squirrel.y += squirrel.vy;
+    squirrel.vx *= FRICTION; squirrel.vy *= FRICTION;
+    squirrel.rotation += squirrel.vx * 0.05;
+    const laneLeft = canvas.width / 2 - 100, laneRight = canvas.width / 2 + 100;
+    if (squirrel.x < laneLeft + SQUIRREL_RADIUS) { squirrel.x = laneLeft + SQUIRREL_RADIUS; squirrel.vx *= -BOUNCE; }
+    if (squirrel.x > laneRight - SQUIRREL_RADIUS) { squirrel.x = laneRight - SQUIRREL_RADIUS; squirrel.vx *= -BOUNCE; }
+    if (squirrel.y < -50) { squirrel.active = false; setTimeout(settleRoll, 500); }
+    const speed = Math.sqrt(squirrel.vx * squirrel.vx + squirrel.vy * squirrel.vy);
+    if (speed < 0.3 && gameState === 'rolling') { squirrel.active = false; setTimeout(settleRoll, 500); }
+}
+
+function checkCollisions() {
+    if (!squirrel.active) return;
+    pins.forEach(pin => {
+        if (pin.knocked) return;
+        const dx = squirrel.x - pin.x, dy = squirrel.y - pin.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < SQUIRREL_RADIUS + PIN_RADIUS) {
+            pin.knocked = true;
+            const angle = Math.atan2(dy, dx);
+            pin.vx = -Math.cos(angle) * 5 + squirrel.vx * 0.3;
+            pin.vy = -Math.sin(angle) * 5 + squirrel.vy * 0.3;
+            squirrel.vx *= 0.85; squirrel.vy *= 0.85;
+            spawnParticles(pin.x, pin.y, 8, ['#FFD700', '#FF6347', '#FF4500']);
+            checkPinChain(pin);
+        }
+    });
+}
+
+function checkPinChain(hitPin) {
+    pins.forEach(otherPin => {
+        if (otherPin.knocked || otherPin.id === hitPin.id) return;
+        const dx = hitPin.x - otherPin.x, dy = hitPin.y - otherPin.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < PIN_RADIUS * 2.5) {
+            otherPin.knocked = true;
+            const angle = Math.atan2(dy, dx);
+            otherPin.vx = -Math.cos(angle) * 3; otherPin.vy = -Math.sin(angle) * 3;
+            spawnParticles(otherPin.x, otherPin.y, 5, ['#FFD700', '#FFA500']);
+        }
+    });
+}
+
+function updatePins() {
+    pins.forEach(pin => {
+        if (!pin.knocked) return;
+        pin.x += pin.vx; pin.y += pin.vy;
+        pin.vx *= PIN_FRICTION; pin.vy *= PIN_FRICTION;
+        pin.rotation += pin.vx * 0.1;
+        pin.opacity = Math.max(0, pin.opacity - 0.008);
+    });
+}
+
+// --- Scoring & Turns ---
+function settleRoll() {
+    gameState = 'scored';
+    const knockedCount = pins.filter(p => p.knocked).length;
+    const prevKnocked = knockedPins.length;
+    const newKnocked = knockedCount - prevKnocked;
+    knockedPins = pins.filter(p => p.knocked);
+
+    const pi = currentPlayer - 1; // player index
+
+    if (rollNum === 1 && knockedCount === 10) {
+        showMessage("STRIKE! 🎳");
+        scores[pi] += 10;
+        spawnParticles(canvas.width/2, canvas.height/2, 30, ['#FFD700','#FF0000','#00FF00','#0000FF']);
+        advanceTurn();
+    } else if (rollNum === 2 && knockedCount === 10) {
+        showMessage("SPARE! ✨");
+        scores[pi] += 10;
+        spawnParticles(canvas.width/2, canvas.height/2, 20, ['#FFD700','#FFA500']);
+        advanceTurn();
+    } else if (rollNum === 2) {
+        scores[pi] += knockedCount;
+        advanceTurn();
+    } else {
+        scores[pi] += newKnocked;
+        rollNum = 2;
+        playerRolls[pi] = 2;
+        gameState = 'aiming';
+        resetPositions();
+    }
+    updateUI();
+}
+
+function advanceTurn() {
+    const pi = currentPlayer - 1;
+    if (numPlayers === 2) {
+        // Switch players within same frame, or advance frame
+        if (currentPlayer === 1) {
+            currentPlayer = 2;
+            rollNum = 1;
+            playerRolls[1] = 1;
+            knockedPins = [];
+            setupPins();
+            resetPositions();
+            gameState = 'aiming';
+            showMessage("Player 2's turn!");
+        } else {
+            // Both players done this frame
+            if (playerFrames[0] >= 10 && playerFrames[1] >= 10) {
+                endGame();
+                return;
+            }
+            playerFrames[0]++;
+            playerFrames[1]++;
+            frame = playerFrames[0];
+            currentPlayer = 1;
+            rollNum = 1;
+            playerRolls[0] = 1;
+            knockedPins = [];
+            setupPins();
+            resetPositions();
+            gameState = 'aiming';
+            showMessage("Frame " + frame + " - Player 1!");
+        }
+    } else {
+        // Single player: advance frame
+        if (playerFrames[0] >= 10) {
+            endGame();
+            return;
+        }
+        playerFrames[0]++;
+        frame = playerFrames[0];
+        rollNum = 1;
+        knockedPins = [];
+        setupPins();
+        resetPositions();
+        gameState = 'aiming';
+    }
+    updateUI();
+}
+
+function endGame() {
+    gameState = 'gameover';
+    if (numPlayers === 2) {
+        if (scores[0] > scores[1]) {
+            showMessage("Player 1 Wins! " + scores[0] + " - " + scores[1]);
+        } else if (scores[1] > scores[0]) {
+            showMessage("Player 2 Wins! " + scores[1] + " - " + scores[0]);
+        } else {
+            showMessage("It's a Tie! " + scores[0] + " each!");
+        }
+    } else {
+        showMessage("Game Over! Score: " + scores[0]);
+    }
+}
+
+function showMessage(text) {
+    const el = document.getElementById('message');
+    el.textContent = text;
+    el.style.opacity = 1;
+    setTimeout(() => { el.style.opacity = 0; }, 2500);
+}
+
+function updateUI() {
+    document.getElementById('frame').textContent = frame;
+    document.getElementById('roll').textContent = rollNum;
+    document.getElementById('pinsLeft').textContent = 10 - pins.filter(p => p.knocked).length;
+    document.getElementById('p1Score').textContent = scores[0];
+    document.getElementById('p2Score').textContent = scores[1];
+    const turnEl = document.getElementById('playerTurn');
+    turnEl.textContent = numPlayers === 2 ? 'Player ' + currentPlayer : 'Player 1';
+    turnEl.style.background = currentPlayer === 1 ? 'rgba(68,136,255,0.4)' : 'rgba(255,68,136,0.4)';
+}
+
+// --- Input ---
+canvas.addEventListener('mousedown', (e) => {
+    if (gameState !== 'aiming') return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    if (Math.sqrt((mx - dog.x) ** 2 + (my - dog.y) ** 2) < 60) {
+        isDragging = true; dragStart = { x: mx, y: my }; dragEnd = { x: mx, y: my };
+    }
+});
+canvas.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    const rect = canvas.getBoundingClientRect();
+    dragEnd = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+});
+canvas.addEventListener('mouseup', (e) => {
+    if (!isDragging) return;
+    isDragging = false;
+    const dx = dragStart.x - dragEnd.x, dy = dragStart.y - dragEnd.y;
+    const power = Math.min(Math.sqrt(dx*dx+dy*dy), 200) / 10;
+    if (power < 1) return;
+    const angle = Math.atan2(dy, dx);
+    squirrel.vx = Math.cos(angle) * power; squirrel.vy = Math.sin(angle) * power;
+    squirrel.active = true; gameState = 'rolling';
+});
+
+// Touch
+canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    if (gameState !== 'aiming') return;
+    const t = e.touches[0], rect = canvas.getBoundingClientRect();
+    const mx = t.clientX - rect.left, my = t.clientY - rect.top;
+    if (Math.sqrt((mx-dog.x)**2+(my-dog.y)**2) < 80) {
+        isDragging = true; dragStart = {x:mx,y:my}; dragEnd = {x:mx,y:my};
+    }
+});
+canvas.addEventListener('touchmove', (e) => {
+    e.preventDefault(); if (!isDragging) return;
+    const t = e.touches[0], rect = canvas.getBoundingClientRect();
+    dragEnd = { x: t.clientX-rect.left, y: t.clientY-rect.top };
+});
+canvas.addEventListener('touchend', (e) => {
+    e.preventDefault(); if (!isDragging) return;
+    isDragging = false;
+    const dx = dragStart.x-dragEnd.x, dy = dragStart.y-dragEnd.y;
+    const power = Math.min(Math.sqrt(dx*dx+dy*dy),200)/10;
+    if (power < 1) return;
+    const angle = Math.atan2(dy, dx);
+    squirrel.vx = Math.cos(angle)*power; squirrel.vy = Math.sin(angle)*power;
+    squirrel.active = true; gameState = 'rolling';
+});
+
+// --- Game Loop ---
+function gameLoop() {
+    animFrameId = requestAnimationFrame(gameLoop);
+    if (gameState === 'menu') return;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawLane();
+    pins.forEach(pin => { if (!pin.knocked) drawCoyotePin(pin); });
+    pins.forEach(pin => { if (pin.knocked) drawCoyotePin(pin); });
+    if (squirrel.active) { drawSquirrel(squirrel.x, squirrel.y, squirrel.rotation); }
+    else if (gameState === 'aiming') { drawSquirrel(squirrel.x, squirrel.y, 0); }
+    drawDog(dog.x, dog.y);
+    if (gameState === 'aiming') drawAimLine();
+    drawParticles();
+
+    if (gameState === 'rolling') { updateSquirrel(); checkCollisions(); updatePins(); }
+}
+
+// Kick off loop (stays idle until startGame is called)
+gameLoop();
+</script>
+</body>
+</html>
